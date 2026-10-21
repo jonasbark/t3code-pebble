@@ -25,6 +25,8 @@ var DEFAULT_INTERACTION_MODE = "default";
 var OAUTH_TOKEN_EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange";
 var OAUTH_ACCESS_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token";
 var T3_BOOTSTRAP_TOKEN_TYPE = "urn:t3:params:oauth:token-type:environment-bootstrap";
+var ORCHESTRATION_PROTOCOL_VERSION = 2;
+var WORKING_RUN_STATUSES = ["preparing", "queued", "starting", "running", "waiting"];
 
 var cachedSocketToken = null;
 var nextRequestId = 1;
@@ -37,6 +39,9 @@ var activeProjectListPoll = null;
 var threadActivityById = {};
 var threadPreferencesById = {};
 var activeWatchSeq = 0;
+// Older servers ignore the protocol query param and still send v1 shapes;
+// remember which shape the server answered with so commands match it.
+var serverOrchestrationProtocol = ORCHESTRATION_PROTOCOL_VERSION;
 
 function value(payload, name, fallback) {
   if (payload[name] !== undefined) return payload[name];
@@ -432,7 +437,8 @@ function finishSocketUrl(wsErr, result, legacy, callback) {
 }
 
 function withSocketToken(token, legacy) {
-  return wsBaseUrl() + (legacy ? "?wsToken=" : "?wsTicket=") + encodeURIComponent(token);
+  return wsBaseUrl() + "?orchestrationProtocol=" + ORCHESTRATION_PROTOCOL_VERSION +
+    (legacy ? "&wsToken=" : "&wsTicket=") + encodeURIComponent(token);
 }
 
 function rpc(method, params, onChunk, onDone) {
@@ -536,6 +542,7 @@ function loadShellSnapshot(seq, callback) {
   rpc("orchestration.subscribeShell", {}, function(item) {
     if (!item || item.kind !== "snapshot" || !item.snapshot) return;
     completed = true;
+    serverOrchestrationProtocol = item.snapshot.schemaVersion >= 2 ? 2 : 1;
     callback(null, item.snapshot);
     return true;
   }, function(err) {
@@ -584,13 +591,27 @@ function isThreadWorking(thread) {
   for (var i = 0; i < messages.length; i++) {
     if (messages[i] && messages[i].streaming) return true;
   }
-  var status = thread.session ? normalizedSessionStatus(thread.session.status) : "";
+  if (thread.activeRun) {
+    return WORKING_RUN_STATUSES.indexOf(normalizedSessionStatus(thread.activeRun.status)) !== -1;
+  }
+  if (!thread.session) {
+    return WORKING_RUN_STATUSES.indexOf(normalizedSessionStatus(thread.status)) !== -1 ||
+      WORKING_RUN_STATUSES.indexOf(normalizedSessionStatus(thread.activityRunStatus)) !== -1;
+  }
+  var status = normalizedSessionStatus(thread.session.status);
   return status === "starting" || status === "running" || status === "connecting";
 }
 
+function latestCompletedAt(thread) {
+  if (!thread) return "";
+  if (thread.latestTurn) return thread.latestTurn.completedAt || "";
+  return thread.latestRunCompletedAt || "";
+}
+
 function hasUnseenCompletion(thread) {
-  if (!thread || !thread.latestTurn || !thread.latestTurn.completedAt) return false;
-  var completedAt = Date.parse(thread.latestTurn.completedAt);
+  var completedAtText = latestCompletedAt(thread);
+  if (!completedAtText) return false;
+  var completedAt = Date.parse(completedAtText);
   if (isNaN(completedAt)) return false;
   if (!thread.lastVisitedAt) return true;
   var lastVisitedAt = Date.parse(thread.lastVisitedAt);
@@ -785,8 +806,16 @@ function loadMessages(seq, threadId, options) {
   sendStatus(seq, options.status || "Loading messages");
   rpc("orchestration.subscribeThread", { threadId: threadId }, function(item) {
     if (viewToken !== undefined && viewToken !== messageViewToken) return true;
-    if (!item || item.kind !== "snapshot" || !item.snapshot.thread) return;
-    var thread = item.snapshot.thread;
+    if (!item || item.kind !== "snapshot") return;
+    // Protocol 2 sends a projection with thread metadata and messages side by side.
+    var projection = item.projection || item.snapshot;
+    if (!projection || !projection.thread) return;
+    if (item.projection) serverOrchestrationProtocol = 2;
+    var thread = projection.thread;
+    if (item.projection) {
+      thread.messages = projection.messages || [];
+      thread.activeRun = latestRun(projection.runs);
+    }
     rememberThreadPreferences(thread);
     var messages = thread.messages || [];
     var count = Math.min(messages.length, MAX_MESSAGES);
@@ -818,6 +847,15 @@ function loadMessages(seq, threadId, options) {
     if (viewToken !== undefined && viewToken !== messageViewToken) return;
     if (err) sendError(seq, err.message);
   });
+}
+
+function latestRun(runs) {
+  if (!runs || !runs.length) return null;
+  var latest = runs[0];
+  for (var i = 1; i < runs.length; i++) {
+    if ((runs[i].ordinal || 0) > (latest.ordinal || 0)) latest = runs[i];
+  }
+  return latest;
 }
 
 function uuid() {
@@ -887,7 +925,7 @@ function createThread(seq, projectId, text, callback) {
       return;
     }
     threadPreferencesById[serverThreadId] = preferences;
-    rpc("orchestration.dispatchCommand", {
+    var command = {
       type: "thread.create",
       commandId: uuid(),
       threadId: serverThreadId,
@@ -897,15 +935,38 @@ function createThread(seq, projectId, text, callback) {
       runtimeMode: preferences.runtimeMode,
       interactionMode: preferences.interactionMode,
       branch: null,
-      worktreePath: null,
-      createdAt: new Date().toISOString()
-    }, function() {}, function(err) {
+      worktreePath: null
+    };
+    if (serverOrchestrationProtocol >= 2) {
+      command.createdBy = "user";
+      command.creationSource = "mobile";
+    } else {
+      command.createdAt = new Date().toISOString();
+    }
+    rpc("orchestration.dispatchCommand", command, function() {}, function(err) {
       callback(err, serverThreadId);
     });
   });
 }
 
 function dispatchTurn(threadId, text, callback) {
+  if (serverOrchestrationProtocol >= 2) {
+    rpc("orchestration.dispatchCommand", {
+      type: "message.dispatch",
+      createdBy: "user",
+      creationSource: "mobile",
+      commandId: uuid(),
+      threadId: threadId,
+      messageId: uuid(),
+      text: text || "",
+      attachments: [],
+      dispatchMode: {
+        type: threadActivityById[threadId] && threadActivityById[threadId].working ?
+          "queue_after_active" : "start_immediately"
+      }
+    }, function() {}, callback);
+    return;
+  }
   var now = new Date().toISOString();
   var preferences = savedThreadPreferences(threadId);
   rpc("orchestration.dispatchCommand", {

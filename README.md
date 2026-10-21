@@ -92,7 +92,7 @@ npm run install:emery
 
 ## Releases
 
-Push a tag matching the version in `package.json`, such as `v0.1.5`, to run the GitHub Actions release workflow. The workflow lints the project, builds the PBW, uploads it as an artifact, and attaches it to the matching GitHub Release.
+Push a tag matching the version in `package.json`, such as `v0.1.6`, to run the GitHub Actions release workflow. The workflow lints the project, builds the PBW, uploads it as an artifact, and attaches it to the matching GitHub Release.
 
 Release builds pin Pebble Tool 5.0.39 and Pebble SDK 4.17 for reproducibility.
 

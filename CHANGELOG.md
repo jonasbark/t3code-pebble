@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.6
+
+- Fixed the `WS ERROR` with current T3 Code nightlies by connecting with orchestration protocol 2.
+- Updated project, thread, and message loading, working and completion indicators, thread creation, and sending for the protocol 2 data shapes, while keeping compatibility with older servers.
+
 ## 0.1.5
 
 - Added project-level activity indicators so working agents are visible before opening a thread.

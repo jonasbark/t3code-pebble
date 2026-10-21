@@ -20,7 +20,9 @@ Use the returned `credential` value. Useful T3 Code calls:
 
 - Pairing exchange: `POST /oauth/token` using the OAuth token-exchange form fields.
 - WebSocket ticket: `POST /api/auth/websocket-ticket` with `Authorization: Bearer TOKEN`.
-- WebSocket URL: `/ws?wsTicket=SHORT_LIVED_TICKET`.
+- WebSocket URL: `/ws?orchestrationProtocol=2&wsTicket=SHORT_LIVED_TICKET`. Servers from Oct 2026
+  nightlies reject the upgrade with HTTP 426 `orchestration_protocol_incompatible` (the watch only
+  sees `WS ERROR`) when `orchestrationProtocol=2` is missing.
 
 Keep legacy fallbacks for `POST /api/auth/bootstrap/bearer`, `POST /api/auth/ws-token`, and
 `/ws?wsToken=...` so the watch app remains compatible with older T3 releases.
@@ -38,3 +40,9 @@ Responses are `_tag: "Exit"` for completed calls and `_tag: "Chunk"` plus `_tag:
 ```
 
 For project and thread lists, prefer live `orchestration.subscribeShell` and close after the first snapshot. Do not switch this to unary-first `orchestration.getArchivedShellSnapshot`: in this app it has twice regressed the watch to showing only archived/limited projects such as `PebbleGetMe` and `Pinhole`, with no useful thread list. Keep `getArchivedShellSnapshot` only as a fallback if `subscribeShell` errors. For thread messages, use `orchestration.subscribeThread` and close after the first snapshot.
+
+Orchestration protocol 2 changes the shapes: shell threads carry `status`/`activityRunStatus` and
+`latestRunCompletedAt` instead of `session`/`latestTurn`; `subscribeThread` returns
+`{kind:"snapshot", projection:{thread, messages, runs, ...}}`; sending uses `message.dispatch` (with
+`createdBy`, `creationSource`, `dispatchMode`) instead of `thread.turn.start`, and `thread.create` needs
+`createdBy`/`creationSource` and no `createdAt`. Keep the v1 paths for older servers.
