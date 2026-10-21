@@ -6,6 +6,8 @@
 #define LIST_MARKER_WIDTH 8
 #define COLOR_BAR_HEIGHT 3
 #define BODY_MAX_LAYOUT_HEIGHT 2000
+#define MESSAGE_FONT_KEY FONT_KEY_GOTHIC_18
+#define STATUS_FONT_KEY FONT_KEY_GOTHIC_24_BOLD
 
 static Layer *s_accent_layer;
 static Layer *s_loading_layer;
@@ -188,7 +190,8 @@ static void prv_update_body_layout(const char *body) {
   s_expanded_max_scroll = 0;
 
   if (s_state->view == VIEW_EXPANDED) {
-    GFont font = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
+    GFont font = fonts_get_system_font(MESSAGE_FONT_KEY);
+    text_layer_set_font(s_body_layer, font);
     GRect layout_rect = GRect(0, 0, viewport.size.w - 16, BODY_MAX_LAYOUT_HEIGHT);
     GSize content_size = graphics_text_layout_get_content_size(
         body, font, layout_rect, GTextOverflowModeWordWrap, GTextAlignmentLeft);
@@ -200,6 +203,7 @@ static void prv_update_body_layout(const char *body) {
     text_layer_set_overflow_mode(s_body_layer, GTextOverflowModeWordWrap);
   } else {
     s_state->scroll = 0;
+    text_layer_set_font(s_body_layer, fonts_get_system_font(STATUS_FONT_KEY));
     text_layer_set_overflow_mode(s_body_layer, GTextOverflowModeTrailingEllipsis);
   }
 
@@ -524,7 +528,7 @@ static void prv_message_update_proc(Layer *layer, GContext *ctx) {
   graphics_context_set_text_color(ctx, GColorBlack);
   graphics_draw_text(ctx,
                      msg->text,
-                     fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
+                     fonts_get_system_font(MESSAGE_FONT_KEY),
                      text_rect,
                      GTextOverflowModeTrailingEllipsis,
                      align,
@@ -577,7 +581,7 @@ void ui_create(Window *window, UiState *state) {
   layer_add_child(root, scroll_layer_get_layer(s_body_scroll_layer));
 
   s_body_layer = text_layer_create(GRect(8, 0, bounds.size.w - 16, 164));
-  text_layer_set_font(s_body_layer, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
+  text_layer_set_font(s_body_layer, fonts_get_system_font(STATUS_FONT_KEY));
   text_layer_set_overflow_mode(s_body_layer, GTextOverflowModeTrailingEllipsis);
   scroll_layer_add_child(s_body_scroll_layer, text_layer_get_layer(s_body_layer));
 

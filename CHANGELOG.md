@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.9
+
+- Reduced the message font size in the message list and message detail view so more text fits on screen.
+
 ## 0.1.8
 
 - Added starred threads: long-press `SELECT` on a thread to star it, and starred threads appear above the projects list for one-press access. Long-press a starred row there to unstar it.
