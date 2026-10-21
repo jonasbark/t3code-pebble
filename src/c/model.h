@@ -21,6 +21,9 @@ typedef struct {
   char title[TITLE_LEN];
   char status[32];
   bool working;
+  // Starred threads are listed above projects; `id` then holds the thread id.
+  bool starred;
+  bool unseen_done;
 } ProjectItem;
 
 typedef struct {
@@ -29,6 +32,7 @@ typedef struct {
   char status[32];
   bool working;
   bool unseen_done;
+  bool starred;
 } ThreadItem;
 
 typedef struct {

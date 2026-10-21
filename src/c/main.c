@@ -9,6 +9,7 @@
 #define CMD_MESSAGES 4
 #define CMD_SEND 5
 #define CMD_CANCEL 6
+#define CMD_STAR 7
 #define CMD_ITEM 20
 #define CMD_DONE 21
 #define CMD_STATUS 22
@@ -27,6 +28,8 @@ static int s_selected = 0;
 static int s_scroll = 0;
 static int s_list_first = 0;
 static int s_loading_frame = 0;
+static bool s_messages_from_projects = false;
+static bool s_stars_changed = false;
 
 static ProjectItem s_projects[MAX_PROJECTS];
 static ThreadItem s_threads[MAX_THREADS];
@@ -107,6 +110,21 @@ static void prv_send_cancel_poll(void) {
   dict_write_uint8(iter, MESSAGE_KEY_Command, CMD_CANCEL);
   dict_write_uint32(iter, MESSAGE_KEY_Seq, s_seq);
   dict_write_cstring(iter, MESSAGE_KEY_ThreadId, s_thread_id);
+  dict_write_end(iter);
+  app_message_outbox_send();
+}
+
+static void prv_send_star(const char *thread_id, bool starred) {
+  DictionaryIterator *iter;
+  if (app_message_outbox_begin(&iter) != APP_MSG_OK) {
+    prv_copy_cstr(s_status, sizeof(s_status), "Phone message busy");
+    prv_render();
+    return;
+  }
+  dict_write_uint8(iter, MESSAGE_KEY_Command, CMD_STAR);
+  dict_write_uint32(iter, MESSAGE_KEY_Seq, s_seq);
+  dict_write_cstring(iter, MESSAGE_KEY_ThreadId, thread_id);
+  dict_write_int32(iter, MESSAGE_KEY_Starred, starred ? 1 : 0);
   dict_write_end(iter);
   app_message_outbox_send();
 }
@@ -298,18 +316,25 @@ static void prv_down_click(ClickRecognizerRef recognizer, void *context) {
 
 static void prv_select_click(ClickRecognizerRef recognizer, void *context) {
   if (s_loading) return;
-  if (s_view == VIEW_PROJECTS && s_project_count > 0) {
+  if (s_view == VIEW_PROJECTS && s_project_count > 0 && s_projects[s_selected].starred) {
+    prv_copy_cstr(s_thread_id, sizeof(s_thread_id), s_projects[s_selected].id);
+    s_projects[s_selected].unseen_done = false;
+    s_messages_from_projects = true;
+    prv_request_messages();
+  } else if (s_view == VIEW_PROJECTS && s_project_count > 0) {
     prv_copy_cstr(s_project_id, sizeof(s_project_id), s_projects[s_selected].id);
     prv_request_threads();
   } else if (s_view == VIEW_THREADS && s_thread_count > 0) {
     if (s_selected == 0) {
       prv_open_new_thread();
     } else if (s_selected <= s_thread_count) {
+      s_messages_from_projects = false;
       prv_copy_cstr(s_thread_id, sizeof(s_thread_id), s_threads[s_selected - 1].id);
       prv_clear_thread_done_marker(s_thread_id);
       prv_request_messages();
     }
   } else if (s_view == VIEW_THREADS && s_thread_count == 0 && s_selected == 0) {
+    s_messages_from_projects = false;
     prv_open_new_thread();
   } else if (s_view == VIEW_MESSAGES && s_message_count > 0) {
     s_view = VIEW_EXPANDED;
@@ -345,12 +370,61 @@ static void prv_dictation_callback(DictationSession *session,
   }
 }
 
+static void prv_unstar_project_row(int index) {
+  prv_send_star(s_projects[index].id, false);
+  for (int i = index; i + 1 < s_project_count; i++) {
+    s_projects[i] = s_projects[i + 1];
+  }
+  s_project_count--;
+  memset(&s_projects[s_project_count], 0, sizeof(s_projects[s_project_count]));
+  prv_list_clamp_page();
+  prv_copy_cstr(s_status, sizeof(s_status), "Unstarred");
+  prv_render();
+}
+
 static void prv_select_long_click(ClickRecognizerRef recognizer, void *context) {
-  if (s_loading || s_view != VIEW_MESSAGES) return;
+  if (s_loading) return;
+  if (s_view == VIEW_PROJECTS) {
+    if (s_project_count > 0 && s_projects[s_selected].starred) prv_unstar_project_row(s_selected);
+    return;
+  }
+  if (s_view == VIEW_THREADS) {
+    if (s_selected == 0 || s_selected > s_thread_count) return;
+    ThreadItem *thread = &s_threads[s_selected - 1];
+    thread->starred = !thread->starred;
+    s_stars_changed = true;
+    prv_send_star(thread->id, thread->starred);
+    prv_copy_cstr(s_status, sizeof(s_status), thread->starred ? "Starred" : "Unstarred");
+    prv_render();
+    return;
+  }
+  if (s_view != VIEW_MESSAGES) return;
   if (!s_dictation) {
     s_dictation = dictation_session_create(512, prv_dictation_callback, NULL);
   }
   dictation_session_start(s_dictation);
+}
+
+// Return to the project list without reloading it; reload only if it is empty or
+// stars changed, since the starred rows sit above the projects.
+static void prv_show_cached_projects(const char *selected_id) {
+  if (s_project_count == 0 || s_stars_changed) {
+    s_stars_changed = false;
+    prv_request_projects();
+    return;
+  }
+  s_view = VIEW_PROJECTS;
+  s_selected = 0;
+  for (int i = 0; i < s_project_count; i++) {
+    if (strcmp(s_projects[i].id, selected_id) == 0) {
+      s_selected = i;
+      break;
+    }
+  }
+  s_list_first = 0;
+  prv_list_clamp_page();
+  prv_copy_cstr(s_status, sizeof(s_status), "");
+  prv_render();
 }
 
 static void prv_back_click(ClickRecognizerRef recognizer, void *context) {
@@ -362,6 +436,11 @@ static void prv_back_click(ClickRecognizerRef recognizer, void *context) {
     prv_end_load();
     s_refresh_after_send = false;
     prv_send_cancel_poll();
+    if (s_messages_from_projects) {
+      s_messages_from_projects = false;
+      prv_show_cached_projects(s_thread_id);
+      return;
+    }
     s_view = VIEW_THREADS;
     s_selected = 0;
     s_list_first = 0;
@@ -369,24 +448,9 @@ static void prv_back_click(ClickRecognizerRef recognizer, void *context) {
   } else if (s_view == VIEW_THREADS) {
     prv_end_load();
     s_refresh_after_send = false;
-    if (s_project_count == 0) {
-      prv_request_projects();
-      return;
-    }
     s_seq++;
     prv_send_cancel_poll();
-    s_view = VIEW_PROJECTS;
-    s_selected = 0;
-    for (int i = 0; i < s_project_count; i++) {
-      if (strcmp(s_projects[i].id, s_project_id) == 0) {
-        s_selected = i;
-        break;
-      }
-    }
-    s_list_first = 0;
-    prv_list_clamp_page();
-    prv_copy_cstr(s_status, sizeof(s_status), "");
-    prv_render();
+    prv_show_cached_projects(s_project_id);
   } else {
     if (s_loading) {
       s_seq++;
@@ -485,6 +549,7 @@ static void prv_inbox_received(DictionaryIterator *iter, void *context) {
   Tuple *status = dict_find(iter, MESSAGE_KEY_Status);
   Tuple *working = dict_find(iter, MESSAGE_KEY_Working);
   Tuple *unseen_done = dict_find(iter, MESSAGE_KEY_UnseenDone);
+  Tuple *starred = dict_find(iter, MESSAGE_KEY_Starred);
 
   if (s_view == VIEW_PROJECTS && index < MAX_PROJECTS) {
     prv_copy_cstr(s_projects[index].id,
@@ -497,6 +562,13 @@ static void prv_inbox_received(DictionaryIterator *iter, void *context) {
                   sizeof(s_projects[index].status),
                   status ? status->value->cstring : "");
     s_projects[index].working = working && working->value->int32 != 0;
+    s_projects[index].unseen_done = unseen_done && unseen_done->value->int32 != 0;
+    s_projects[index].starred = starred && starred->value->int32 != 0;
+    if (starred && starred->value->int32 != 0) {
+      prv_copy_cstr(s_projects[index].id,
+                    sizeof(s_projects[index].id),
+                    thread_id ? thread_id->value->cstring : "");
+    }
     if (index >= s_project_count) s_project_count = index + 1;
   } else if (s_view == VIEW_THREADS && index < MAX_THREADS) {
     prv_copy_cstr(s_threads[index].id,
@@ -510,6 +582,7 @@ static void prv_inbox_received(DictionaryIterator *iter, void *context) {
                   status ? status->value->cstring : "");
     s_threads[index].working = working && working->value->int32 != 0;
     s_threads[index].unseen_done = unseen_done && unseen_done->value->int32 != 0;
+    s_threads[index].starred = starred && starred->value->int32 != 0;
     if (index >= s_thread_count) s_thread_count = index + 1;
   } else if (s_view == VIEW_MESSAGES && index < MAX_MESSAGES) {
     prv_copy_cstr(s_messages[index].id, sizeof(s_messages[index].id), "");

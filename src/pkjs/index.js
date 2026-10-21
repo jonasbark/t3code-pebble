@@ -6,6 +6,7 @@ var CMD_THREADS = 3;
 var CMD_MESSAGES = 4;
 var CMD_SEND = 5;
 var CMD_CANCEL = 6;
+var CMD_STAR = 7;
 var CMD_ITEM = 20;
 var CMD_DONE = 21;
 var CMD_STATUS = 22;
@@ -16,6 +17,7 @@ var SOCKET_TIMEOUT_MS = 30000;
 var POLL_INTERVAL_MS = 10000;
 var THREAD_POLL_INTERVAL_MS = 15000;
 var MAX_PROJECTS = 30;
+var MAX_STARRED = 10;
 var MAX_THREADS = 40;
 var MAX_MESSAGES = 40;
 var MAX_TEXT_BYTES = 600;
@@ -63,6 +65,62 @@ function readSettings() {
 
 function writeSettings(settings) {
   localStorage.setItem("t3code-settings", JSON.stringify(settings));
+}
+
+// Starred thread ids, oldest first. Kept on the phone so stars stay a watch-only
+// shortcut and don't touch T3 Code's own thread pins.
+function readStarredThreadIds() {
+  var raw = localStorage.getItem("t3code-starred-threads");
+  if (!raw) return [];
+  try {
+    var ids = JSON.parse(raw);
+    return Array.isArray(ids) ? ids : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function writeStarredThreadIds(ids) {
+  localStorage.setItem("t3code-starred-threads", JSON.stringify(ids));
+}
+
+function isThreadStarred(threadId) {
+  return readStarredThreadIds().indexOf(threadId) !== -1;
+}
+
+function setThreadStarred(threadId, starred) {
+  if (!threadId) return;
+  var ids = readStarredThreadIds();
+  var index = ids.indexOf(threadId);
+  if (starred && index === -1) {
+    ids.push(threadId);
+    if (ids.length > MAX_STARRED) ids = ids.slice(ids.length - MAX_STARRED);
+  } else if (!starred && index !== -1) {
+    ids.splice(index, 1);
+  } else {
+    return;
+  }
+  writeStarredThreadIds(ids);
+}
+
+// Protocol 2 lists subagent child threads in the shell too. They have very long ids
+// and belong to their parent thread, so the watch only lists top-level threads.
+function isListedThread(thread) {
+  return !!thread && !thread.archivedAt &&
+    !(thread.lineage && thread.lineage.relationshipToParent === "subagent");
+}
+
+function starredThreads(threads) {
+  var ids = readStarredThreadIds();
+  var byId = {};
+  for (var i = 0; i < threads.length; i++) {
+    if (isListedThread(threads[i])) byId[threads[i].id] = threads[i];
+  }
+  var result = [];
+  for (var j = 0; j < ids.length; j++) {
+    if (byId[ids[j]]) result.push(byId[ids[j]]);
+  }
+  return result;
 }
 
 function normalizeBaseUrl(raw) {
@@ -725,7 +783,7 @@ function loadProjects(seq, options) {
     var workingByProject = {};
     var anyWorking = false;
     for (var threadIndex = 0; threadIndex < threads.length; threadIndex++) {
-      if (threads[threadIndex].projectId && !threads[threadIndex].archivedAt &&
+      if (threads[threadIndex].projectId && isListedThread(threads[threadIndex]) &&
           isThreadWorking(threads[threadIndex])) {
         workingByProject[threads[threadIndex].projectId] = true;
         anyWorking = true;
@@ -734,12 +792,30 @@ function loadProjects(seq, options) {
     projects.sort(function(a, b) {
       return String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""));
     });
-    var count = Math.min(projects.length, MAX_PROJECTS);
-    for (var i = 0; i < count; i++) {
+    var starred = starredThreads(threads);
+    var projectCount = Math.min(projects.length, MAX_PROJECTS - starred.length);
+    var count = starred.length + projectCount;
+    for (var k = 0; k < starred.length; k++) {
+      rememberThreadPreferences(starred[k]);
+      var starredWorking = isThreadWorking(starred[k]);
+      var starredActivity = activityForThread(starred[k], starredWorking);
       send({
         Command: CMD_ITEM,
         Seq: seq,
-        Index: i,
+        Index: k,
+        Total: count,
+        ThreadId: starred[k].id,
+        Title: truncateUtf8(starred[k].title || "Thread", 88),
+        Working: starredWorking ? 1 : 0,
+        UnseenDone: starredActivity.unseenDone ? 1 : 0,
+        Starred: 1
+      });
+    }
+    for (var i = 0; i < projectCount; i++) {
+      send({
+        Command: CMD_ITEM,
+        Seq: seq,
+        Index: starred.length + i,
         Total: count,
         ProjectId: projects[i].id,
         Title: truncateUtf8(projects[i].title || basename(projects[i].workspaceRoot) || "Project", 88),
@@ -770,7 +846,7 @@ function loadThreads(seq, projectId, options) {
     var threads = snapshot && snapshot.threads ? snapshot.threads : [];
     var filtered = [];
     for (var i = 0; i < threads.length; i++) {
-      if (threads[i].projectId === projectId && !threads[i].archivedAt) filtered.push(threads[i]);
+      if (threads[i].projectId === projectId && isListedThread(threads[i])) filtered.push(threads[i]);
     }
     filtered.sort(function(a, b) {
       return String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""));
@@ -791,7 +867,8 @@ function loadThreads(seq, projectId, options) {
         Title: truncateUtf8(filtered[j].title || "Thread", 88),
         Status: threadStatusText(filtered[j], working),
         Working: working ? 1 : 0,
-        UnseenDone: activity.unseenDone ? 1 : 0
+        UnseenDone: activity.unseenDone ? 1 : 0,
+        Starred: isThreadStarred(filtered[j].id) ? 1 : 0
       });
     }
     send({ Command: CMD_DONE, Seq: seq, Total: count });
@@ -901,7 +978,7 @@ function preferencesForProject(snapshot, projectId) {
     }
   }
   for (var i = 0; i < threads.length; i++) {
-    if (threads[i].projectId === projectId) {
+    if (threads[i].projectId === projectId && isListedThread(threads[i])) {
       if (!best || String(threads[i].updatedAt || "").localeCompare(String(best.updatedAt || "")) > 0) {
         best = threads[i];
       }
@@ -1080,6 +1157,8 @@ Pebble.addEventListener("appmessage", function(e) {
     cancelThreadListPoll();
     cancelProjectListPoll();
     sendTurn(seq, value(payload, "ThreadId", ""), value(payload, "ProjectId", ""), value(payload, "Text", ""));
+  } else if (command === CMD_STAR) {
+    setThreadStarred(value(payload, "ThreadId", ""), value(payload, "Starred", 0) !== 0);
   } else if (command === CMD_CANCEL) {
     cancelMessagePoll();
     cancelThreadListPoll();

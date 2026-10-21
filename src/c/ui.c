@@ -137,6 +137,24 @@ static void prv_draw_done_dot(GContext *ctx, GRect rect, GColor color) {
   graphics_fill_circle(ctx, GPoint(rect.origin.x + 7, rect.origin.y + 8), 4);
 }
 
+static void prv_draw_star(GContext *ctx, GRect rect, GColor color) {
+  static GPoint points[10];
+  static GPathInfo info = {.num_points = 10, .points = points};
+  // Five-point star inside a 14x14 box, outer radius 7 and inner radius 3.
+  static const int8_t offsets[10][2] = {
+      {0, -7}, {2, -2}, {7, -2}, {3, 1}, {4, 6}, {0, 3}, {-4, 6}, {-3, 1}, {-7, -2}, {-2, -2}};
+  int cx = rect.origin.x + 7;
+  int cy = rect.origin.y + 9;
+  for (int i = 0; i < 10; i++) {
+    points[i] = GPoint(cx + offsets[i][0], cy + offsets[i][1]);
+  }
+  GPath *path = gpath_create(&info);
+  if (!path) return;
+  graphics_context_set_fill_color(ctx, color);
+  gpath_draw_filled(ctx, path);
+  gpath_destroy(path);
+}
+
 static void prv_set_header(const char *title) {
   text_layer_set_text(s_header_layer, title);
 }
@@ -259,7 +277,12 @@ void ui_render(void) {
     snprintf(footer, sizeof(footer), "UP/DN scroll  SEL back");
   } else if (count > 0) {
     if (s_state->view == VIEW_PROJECTS) {
-      snprintf(footer, sizeof(footer), "%d/%d  SELECT opens threads", s_state->selected + 1, count);
+      snprintf(footer,
+               sizeof(footer),
+               s_state->projects[s_state->selected].starred ? "%d/%d  Hold SEL to unstar"
+                                                            : "%d/%d  SELECT opens threads",
+               s_state->selected + 1,
+               count);
     } else if (s_state->view == VIEW_THREADS) {
       if (s_state->selected == 0) {
         snprintf(footer, sizeof(footer), "+  SELECT new thread");
@@ -413,9 +436,15 @@ static void prv_list_update_proc(Layer *layer, GContext *ctx) {
     const ThreadItem *thread = prv_thread_for_row(index);
     const ProjectItem *project = prv_project_for_row(index);
     bool project_working = project && project->working;
-    bool has_activity_icon =
-        project_working || (thread && (thread->working || thread->unseen_done));
+    bool has_activity_icon = project_working || (project && project->unseen_done) ||
+                             (thread && (thread->working || thread->unseen_done));
     int text_x = LIST_SIDE_PADDING + (has_marker ? LIST_MARKER_WIDTH + 4 : 0);
+    bool starred = (project && project->starred) || (thread && thread->starred);
+    if (starred) {
+      prv_draw_star(
+          ctx, GRect(text_x, y + 5, 14, 16), highlighted ? GColorWhite : GColorChromeYellow);
+      text_x += 17;
+    }
     if (has_activity_icon) {
       bool working = project_working || (thread && thread->working);
       GColor icon_color = highlighted ? GColorWhite : (working ? GColorCobaltBlue : GColorDarkGray);

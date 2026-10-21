@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.8
+
+- Added starred threads: long-press `SELECT` on a thread to star it, and starred threads appear above the projects list for one-press access. Long-press a starred row there to unstar it.
+- Hid subagent child threads from thread lists on current T3 Code nightlies.
+
 ## 0.1.7
 
 - Fixed thread lists showing only "New thread" on current T3 Code nightlies, which send a second, thread-less shell snapshot after the real one.

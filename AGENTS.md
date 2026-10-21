@@ -46,3 +46,11 @@ Orchestration protocol 2 changes the shapes: shell threads carry `status`/`activ
 `{kind:"snapshot", projection:{thread, messages, runs, ...}}`; sending uses `message.dispatch` (with
 `createdBy`, `creationSource`, `dispatchMode`) instead of `thread.turn.start`, and `thread.create` needs
 `createdBy`/`creationSource` and no `createdAt`. Keep the v1 paths for older servers.
+
+Protocol 2 `subscribeShell` chunks can carry more than one `snapshot` item: the full one first, then
+projects-only enrichment snapshots (with `resolvedRepositoryIdentityRoots` and `threads: []`). Use
+only the first full snapshot, or thread lists go empty. The shell also lists subagent child threads
+(`lineage.relationshipToParent === "subagent"`, ids over 200 chars); keep them out of watch lists.
+
+Starred threads are stored only in PebbleKitJS localStorage (`t3code-starred-threads`), not as T3
+Code pins, because T3 pins can be bulk-applied and would flood the watch's project list.

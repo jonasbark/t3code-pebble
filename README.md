@@ -56,8 +56,8 @@ The pairing code is exchanged for a bearer session token and then discarded. You
 
 ## Controls
 
-- **Projects:** `UP` / `DOWN` selects a project; `SELECT` opens its threads.
-- **Threads:** `UP` / `DOWN` selects a thread; `SELECT` opens its messages. Select `+` to start a new thread.
+- **Projects:** `UP` / `DOWN` selects a project; `SELECT` opens its threads. Starred threads are listed first; `SELECT` opens one directly and long-press `SELECT` unstars it.
+- **Threads:** `UP` / `DOWN` selects a thread; `SELECT` opens its messages. Long-press `SELECT` stars or unstars it. Select `+` to start a new thread.
 - **Messages:** `UP` / `DOWN` moves through messages; `SELECT` opens the selected message.
 - **Message detail:** `UP` / `DOWN` scrolls; `SELECT` returns to the message list.
 - **Dictation:** Long-press `SELECT` from the message list, speak your prompt, and confirm it to send.
@@ -92,7 +92,7 @@ npm run install:emery
 
 ## Releases
 
-Push a tag matching the version in `package.json`, such as `v0.1.7`, to run the GitHub Actions release workflow. The workflow lints the project, builds the PBW, uploads it as an artifact, and attaches it to the matching GitHub Release.
+Push a tag matching the version in `package.json`, such as `v0.1.8`, to run the GitHub Actions release workflow. The workflow lints the project, builds the PBW, uploads it as an artifact, and attaches it to the matching GitHub Release.
 
 Release builds pin Pebble Tool 5.0.39 and Pebble SDK 4.17 for reproducibility.
 
