@@ -369,7 +369,24 @@ static void prv_back_click(ClickRecognizerRef recognizer, void *context) {
   } else if (s_view == VIEW_THREADS) {
     prv_end_load();
     s_refresh_after_send = false;
-    prv_request_projects();
+    if (s_project_count == 0) {
+      prv_request_projects();
+      return;
+    }
+    s_seq++;
+    prv_send_cancel_poll();
+    s_view = VIEW_PROJECTS;
+    s_selected = 0;
+    for (int i = 0; i < s_project_count; i++) {
+      if (strcmp(s_projects[i].id, s_project_id) == 0) {
+        s_selected = i;
+        break;
+      }
+    }
+    s_list_first = 0;
+    prv_list_clamp_page();
+    prv_copy_cstr(s_status, sizeof(s_status), "");
+    prv_render();
   } else {
     if (s_loading) {
       s_seq++;

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.7
+
+- Fixed thread lists showing only "New thread" on current T3 Code nightlies, which send a second, thread-less shell snapshot after the real one.
+- Going back from a project's threads now shows the cached project list instead of reloading it.
+
 ## 0.1.6
 
 - Fixed the `WS ERROR` with current T3 Code nightlies by connecting with orchestration protocol 2.

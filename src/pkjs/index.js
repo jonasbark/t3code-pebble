@@ -497,7 +497,7 @@ function rpc(method, params, onChunk, onDone) {
       if (message._tag === "Chunk" && String(message.requestId) === String(id)) {
         var items = message.values || [];
         var shouldFinish = false;
-        for (var i = 0; i < items.length; i++) {
+        for (var i = 0; i < items.length && !shouldFinish; i++) {
           if (onChunk(items[i]) === true) shouldFinish = true;
         }
         ws.send(JSON.stringify({
@@ -540,7 +540,11 @@ function effectFailureMessage(exit) {
 function loadShellSnapshot(seq, callback) {
   var completed = false;
   rpc("orchestration.subscribeShell", {}, function(item) {
+    if (completed) return true;
     if (!item || item.kind !== "snapshot" || !item.snapshot) return;
+    // Protocol 2 follows the full snapshot with projects-only enrichment snapshots
+    // whose thread lists are empty; they must not replace the real one.
+    if (item.resolvedRepositoryIdentityRoots !== undefined) return;
     completed = true;
     serverOrchestrationProtocol = item.snapshot.schemaVersion >= 2 ? 2 : 1;
     callback(null, item.snapshot);
